@@ -1,294 +1,135 @@
-# org-personal-site Agent File
+# org-personal-site Agent Guide
 
-## Project Overview
+## Core Directives for AI Agents
 
-`org-personal-site` is an Emacs package for generating static websites from org-mode files. It's designed for frictionless personal blogging and publishing.
+1. **Philosophy**: This is a "batteries-included" Emacs static site generator. Prioritize "frictionless" UX, minimal dependencies, and no modification of source files.
+2. **Context**: You are working in an Emacs Lisp package. Assume the user is an Emacs user.
+3. **Safety**: Never modify the `content/` source directory programmatically unless explicitly asked (e.g., creating a new post). Always treat `output-dir` as ephemeral/overwriteable.
 
-**Location:** `~/src/org-personal-site/`
+## Build, Lint, and Verify
 
-**Version:** 0.1.0
+There is no automated test suite (ERT). Verification relies on static analysis and manual testing.
 
-**Author:** Nana Adane
+### Static Analysis (Run before changes)
+Always run these checks before submitting code.
 
-## Purpose
+1. **Syntax Check** (Catch unbalanced parens):
+   ```bash
+   emacs --batch --eval "(check-parens)" org-personal-site.el
+   ```
 
-A batteries-included static site generator that:
-- Works entirely within Emacs
-- Uses org-mode as the source format
-- Generates clean, fast HTML
-- Provides live preview with auto-rebuild
-- Deploys to GitHub Pages via git
-- Requires minimal configuration
+2. **Byte Compilation** (Catch warnings, unused vars, free variables):
+   ```bash
+   emacs --batch --eval "(byte-compile-file \"org-personal-site.el\")"
+   ```
+   *Goal*: 0 warnings. If `package-lint` were available, we'd use it, but `byte-compile` is the baseline.
 
-## Architecture
+### Manual Verification
+Refer to `TESTING.md` for comprehensive scenarios. Common validation steps:
 
-### Core Files
+- **Load Package**: 
+  ```elisp
+  (load-file "org-personal-site.el")
+  ```
+- **Run Build**: 
+  `M-x org-personal-site-build` -> Check `*Messages*` buffer for success.
+- **Run Preview**: 
+  `M-x org-personal-site-preview` -> Verify server starts and browser opens.
+- **Check Output**: 
+  Verify `output-dir` contains `index.html`, `feed.xml`, `favicon.svg`, and `links/style.css`.
 
-- **org-personal-site.el** (~1100 lines) - Main package
-  - Configuration system (defcustom)
-  - Build engine (org-publish integration)
-  - Template generation (CSS, HTML, RSS, favicon)
-  - Preview mode (file watching + HTTP server)
-  - Content creation (new posts, image insertion)
-  - Deployment (git integration)
+## Code Style & Conventions
 
-- **README.md** - User documentation
-- **TESTING.md** - Testing guide for development
-- **INSTALL.md** - Installation instructions
-- **test-config.el** - Example configuration
+### General Elisp
+- **Indentation**: 2 spaces. No tabs.
+- **Formatting**: Keep lines < 100 chars where possible.
+- **Headers**: Maintain standard package headers and section comments (`;;; Section Name`).
+- **Parens**: Keep closing parens on the same line (standard Lisp style).
+  *Good*: `(list a b))`
+  *Bad*: `(list a b) )`
+
+### Naming
+- **Prefix**: `org-personal-site-` for everything.
+- **Public**: `org-personal-site-noun` or `org-personal-site-verb` (Interactive commands).
+- **Private**: `org-personal-site--noun` or `org-personal-site--verb` (Helpers).
+- **Variables**: `org-personal-site-setting` (public defcustoms), `org-personal-site--state` (internal).
+- **Constants**: `org-personal-site--themes`.
+
+### Documentation
+- **Docstrings**: **MANDATORY** for every `defun`, `defvar`, `defcustom`.
+  - Format: First line is a summary sentence. Subsequent lines detail args and behavior.
+  - Interactive commands *must* document their behavior clearly for the user.
+- **Comments**: Explain *intent*, not mechanics. Use inline comments sparingly.
+
+### Imports
+- **Top-level**: `(require 'feature)` at the top of the file.
+- **Dynamic**: Use `(require 'feature nil 'noerror)` inside functions for optional dependencies (e.g., `htmlize`, `simple-httpd` fallback).
+
+### Error Handling
+- **User Errors**: Use `(user-error "Message")` for anticipated configuration/usage issues.
+- **System Errors**: Use `(error "Message")` for bugs or unexpected states.
+- **Logging**: Use `(org-personal-site--message "...")` to output with the standard prefix.
+
+## Architecture & Internals
+
+### File Structure
+- `org-personal-site.el`: Single-file package containing all logic.
+- `content/`: Source directory (Org files). Contains `index.org`, `blog/`, `media/`.
+- `output-dir/`: Generated site (HTML, CSS). Treat as disposable.
 
 ### Key Components
+1. **Config**: `defcustom` variables define behavior (themes, fonts, dirs).
+2. **Build Engine**: 
+   - Uses `org-publish` for Org->HTML conversion.
+   - Dynamically constructs `org-publish-project-alist` based on user config.
+   - Cleans up orphaned HTML files (files with no corresponding Org source).
+3. **Preview**: 
+   - Tries `python3 -m http.server` first (performance).
+   - Falls back to Elisp `simple-httpd`.
+   - Uses `file-notify` to watch `content/` and trigger rebuilds.
+4. **Deploy**: 
+   - Uses raw Git shell commands (`git add`, `git commit`).
+   - Does NOT use Magit API to ensure zero-dependency deployment.
 
-#### 1. Configuration System
-All settings use Emacs `defcustom` for easy customization:
-- Source/output directories
-- Site metadata (name, author, URL)
-- Theme system (3 presets + custom)
-- Font configuration (Google Fonts + custom CDN)
-- Server settings (port, Python vs simple-httpd)
-- Deployment settings (auto-push)
+### Design Decisions
+- **In-Memory Generation**: CSS, RSS, and Favicon are generated strings in Elisp, not read from template files. This keeps the package self-contained.
+- **Post-Processing**: Index page is modified *after* generation to inject "Recent Posts".
+- **Theme System**: Defined as an alist of plists (`:background`, `:foreground`, etc.).
 
-#### 2. Build System
-- Uses `org-publish` for org → HTML conversion
-- Generates CSS from theme configuration
-- Post-processes HTML to inject recent posts
-- Generates RSS feed with proper XML escaping
-- Creates SVG favicon from site name
-- Optional CNAME file for custom domains
-- Cleans up orphaned HTML files (deleted source files)
+## Common Workflows
 
-#### 3. Preview Mode
-- Python HTTP server (default) or simple-httpd
-- File watcher on `content/`, `content/blog/`, `content/media/`
-- Smart filtering (ignores temp/backup files)
-- Debounced rebuilds (1.5s delay)
-- Loop prevention (2s minimum between rebuilds)
-
-#### 4. Content Creation
-- `org-personal-site-new-post` - Creates dated org file with template
-- `org-personal-site-insert-image` - Inserts image with caption
-- Automatic slug generation from titles
-
-#### 5. Deployment
-- Git-based (no Magit dependency)
-- Stages all changes (`git add -A`)
-- Prompts for commit message
-- Optional auto-push
-- Works with GitHub Pages
-
-## Design Philosophy
-
-### Principles
-
-1. **Emacs-native** - Pure Elisp, no external scripts
-2. **Minimal dependencies** - Just Emacs, simple-httpd, git
-3. **No source modification** - Never modifies source files
-4. **Clean separation** - Source (org) vs Output (HTML) directories
-5. **Frictionless workflow** - Everything from Emacs
-6. **Configurable** - But with sensible defaults
-
-### Technical Decisions
-
-**In-memory template generation** - CSS, HTML, RSS are generated in memory from config, not written to source directory. Cleaner and prevents stale files.
-
-**Post-processing over preprocessing** - Instead of modifying source org files, we post-process generated HTML (e.g., injecting recent posts). Source files stay pristine.
-
-**Git over Magit** - Direct git commands instead of Magit functions for portability and to avoid version-specific APIs.
-
-**Python server by default** - Python's http.server is faster and doesn't slow down Emacs, but simple-httpd is available as fallback.
-
-**Theme constraints** - Only 3 colors (background, foreground, accent) to encourage thoughtful design and maintain cohesion.
-
-## Common Tasks
-
-### Adding a New Feature
-
-1. Add configuration variable if needed (defcustom in Configuration section)
-2. Implement the function
-3. Add interactive command (defun with ;;;###autoload)
-4. Document in README.md
-5. Add to test-config.el example if relevant
-6. Update TESTING.md with test scenario
+### Adding a Feature
+1. **Define Config**: Add `defcustom` in "Configuration" section.
+2. **Implement Logic**: Create private helper `org-personal-site--helper`.
+3. **Expose Command**: Create interactive `org-personal-site-command`.
+4. **Document**: Update `README.md` and `AGENTS.md` if necessary.
 
 ### Fixing a Bug
+1. **Reproduce**: Use `TESTING.md` steps.
+2. **Fix**: Edit `org-personal-site.el`.
+3. **Verify**: Run `check-parens` and `byte-compile`.
+4. **Test**: Run `M-x org-personal-site-build` and verify output.
 
-1. Identify the issue location
-2. Add test case to reproduce
-3. Fix the code
-4. Verify syntax: `emacs --batch --eval "(check-parens)" org-personal-site.el`
-5. Test with real site
-6. Document in TESTING.md if edge case
+## Cursor/Copilot Rules
+*No specific rules found in .cursorrules or .github/copilot-instructions.md.*
+Follow the "Code Style & Conventions" above strictly.
 
-### Updating CSS Generation
+### Example: Good vs Bad Style
 
-CSS is generated in `org-personal-site--generate-css-content`. The function:
-- Takes theme colors from configuration
-- Injects them into CSS template string
-- Returns complete CSS as string
-
-To modify:
-1. Edit the format string in the function
-2. Test with different themes
-3. Verify generated CSS in output directory
-
-### Adding a New Theme
-
-1. Add theme definition to `org-personal-site--themes` constant
-2. Include `:background`, `:foreground`, `:accent`, `:description`
-3. Update theme choice in `org-personal-site-theme` defcustom
-4. Document in README.md
-5. Test CSS generation with new theme
-
-## File Structure Expectations
-
-### Source Directory
-
-```
-source-dir/
-├── content/
-│   ├── index.org          (required - homepage)
-│   ├── projects.org       (optional)
-│   ├── blog/              (required - blog posts)
-│   │   └── *.org
-│   └── media/             (optional - images)
-│       └── *.{png,jpg,gif,svg}
-```
-
-### Output Directory
-
-```
-output-dir/
-├── index.html             (generated from content/index.org)
-├── projects.html          (generated from content/projects.org)
-├── blog/
-│   ├── index.html         (auto-generated sitemap)
-│   └── *.html             (generated from blog/*.org)
-├── media/                 (copied from content/media/)
-├── links/
-│   └── style.css          (generated from theme)
-├── favicon.svg            (generated from site name)
-├── feed.xml               (generated RSS)
-└── CNAME                  (optional, if custom domain set)
-```
-
-## Dependencies
-
-### Required
-- Emacs 27.1+
-- simple-httpd (for preview)
-- Git (for deployment)
-- Python 3 (for default preview server)
-
-### Optional
-- htmlize (for syntax highlighting in code blocks)
-
-## Known Limitations
-
-1. **No nested blog directories** - All posts must be directly in `content/blog/`
-2. **Single theme at a time** - No per-page theme overrides
-3. **English only RSS** - Language hardcoded to "en"
-4. **No image optimization** - Images copied as-is
-5. **Basic sitemap** - Date + title only, no tags in sitemap
-
-## Testing
-
-Run syntax check:
-```bash
-emacs --batch --eval "(check-parens)" org-personal-site.el
-```
-
-Test with example site:
+**Bad**:
 ```elisp
-;; Load package
-(load-file "~/src/org-personal-site/org-personal-site.el")
-
-;; Test build
-M-x org-personal-site-build
-
-;; Test preview
-M-x org-personal-site-preview
+(defun my-func ()
+  ;; Missing docstring
+  (setq some-global-var 1) ; Side effect on global
+  (message "Done")) ; Generic message
 ```
 
-See TESTING.md for comprehensive test scenarios.
-
-## Debugging
-
-### Enable verbose messages
-Check `*Messages*` buffer for build output.
-
-### Check generated files
-After build, inspect:
-- `output-dir/links/style.css` - Verify CSS generation
-- `output-dir/feed.xml` - Verify RSS structure
-- `output-dir/index.html` - Verify recent posts injection
-
-### Preview not rebuilding
-1. Check `*Messages*` for watcher errors
-2. Verify file is .org and in watched directory
-3. Ensure file not matching ignore patterns
-4. Check rebuild timestamps are > 2s apart
-
-### Deployment failures
-1. Verify output directory is git repo: `ls output-dir/.git`
-2. Check git remote is configured: `git remote -v`
-3. Test git manually: `cd output-dir && git status`
-
-## Code Style
-
-- **Line length:** No hard limit, but keep readable (~80-100 preferred)
-- **Indentation:** 2 spaces (Emacs Lisp standard)
-- **Docstrings:** Required for all defun, especially interactive commands
-- **Comments:** Explain "why", not "what"
-- **Naming:**
-  - Public: `org-personal-site-command`
-  - Internal: `org-personal-site--helper`
-  - Variables: `org-personal-site-setting`
-  - Internal vars: `org-personal-site--state`
-
-## Release Checklist
-
-Before releasing a new version:
-
-- [ ] Update version in package header
-- [ ] Update CHANGELOG (if exists)
-- [ ] Test all interactive commands
-- [ ] Test with all 3 built-in themes
-- [ ] Verify README examples work
-- [ ] Check syntax: `(check-parens)`
-- [ ] Test on clean Emacs instance
-- [ ] Update TESTING.md if needed
-
-## Future Ideas
-
-These are not commitments, just ideas to consider:
-
-- Tag support in blog index
-- Multiple blog directories
-- Draft preview mode
-- Image optimization
-- Multi-language support
-- Per-page theme overrides
-- Export to other formats (PDF, ePub)
-- Integration with other org tools
-
-## Support
-
-This is a personal project. Issues and improvements welcome, but no guarantees on timeline or acceptance.
-
-## Context for AI Agents
-
-When working on this package:
-
-1. **Preserve the philosophy** - Keep it simple, Emacs-native, frictionless
-2. **Don't add dependencies** unless absolutely necessary
-3. **Test changes** with real org-mode files
-4. **Document everything** - Users should understand what's happening
-5. **Maintain backwards compatibility** when possible
-6. **Keep functions focused** - Do one thing well
-7. **Error messages** should be helpful and actionable
-
-The goal is a tool that gets out of the way and lets you write.
-
----
-
-*Last updated: 2026-02-01*
+**Good**:
+```elisp
+(defun org-personal-site--calculate-thing (arg)
+  "Calculate the thing based on ARG.
+Returns the calculated value."
+  (let ((result (+ arg 1))) ; Local scope
+    (org-personal-site--message "Calculation done: %d" result)
+    result))
+```
